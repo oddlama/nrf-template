@@ -79,19 +79,18 @@
           filter = path: type: (craneLib.filterCargoSources path type) || (builtins.baseNameOf path == "memory.x");
         };
 
-        # Any external packages required to compile this project.
-        # Usually this contains runtime dependencies, but since we are
-        # compiling for a foreign platform, this is most likely going to be empty.
-        nativeBuildInputs =
-          [
-            pkgs.flip-link
-          ];
-
-        # Any external inputs required to run this project.
+        # External packages required to compile this project.
         # For normal rust applications this would contain runtime dependencies,
         # but since we are compiling for a foreign platform this is most likely
-        # going to stay empty.
-        buildInputs = [];
+        # going to stay empty except for the linker.
+        buildInputs =
+          [
+            pkgs.flip-link
+          ]
+          ++ lib.optionals pkgs.stdenv.isDarwin [
+            # Additional darwin specific inputs can be set here
+            pkgs.libiconv
+          ];
 
         # BUG:: This should not be disabled, but some dependencies try to compile against
         # the test crate when it isn't available...
@@ -104,11 +103,12 @@
 
       # Build *just* the cargo dependencies, so we can reuse
       # all of that work (e.g. via cachix) when running in CI
-      cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-        extraDummyScript = ''
-          cp -a ${./memory.x} $out/memory.x
-        '';
-      });
+      cargoArtifacts = craneLib.buildDepsOnly (commonArgs
+        // {
+          extraDummyScript = ''
+            cp -a ${./memory.x} $out/memory.x
+          '';
+        });
 
       # XXX: This is the workaround:
       # BUG: crane currently fails to compile the dummy project when using a linker script.
