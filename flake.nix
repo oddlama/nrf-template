@@ -1,5 +1,6 @@
 {
-  description = "Le hardware project of le me";
+  # TODO: change this to your desired description
+  description = "❄️ 🦀 A template for embedded rust development for the nRF52840 with embassy featuring reproducible builds with nix";
   inputs = {
     advisory-db = {
       url = "github:rustsec/advisory-db";
@@ -52,32 +53,49 @@
       };
       inherit (pkgs) lib;
 
-      # XXX: Change this to your desired project name
+      # TODO: change this to your desired project name
       projectName = "nrf-template";
 
+      # We use rust-overlay to get a compatible nightly toolchain for our host system
+      # that can compile for the correct target (nRF52840 is a thumbv7em ARM architecture).
       rustToolchain = pkgs.pkgsBuildHost.rust-bin.nightly.latest.default.override {
         targets = ["thumbv7em-none-eabihf"];
       };
 
+      # Use that toolchain to get a crane lib. Crane is used here to write the
+      # nix packages that compile and test our rust code.
       craneLib = (crane.mkLib pkgs).overrideToolchain rustToolchain;
 
+      # For each of the classical cargo "functions" like build, doc, test, ...,
+      # crane exposes a function that takes some configuration arguments.
+      # Common settings that we need for all of these are grouped here.
       commonArgs = {
+        # Our rust related sources.
+        # - filterCargoSources will filter out anything not rust-related
+        # - Additionally we allow memory.x so our linker knows where to place
+        # the code for the nRF52840.
         src = lib.cleanSourceWith {
           src = ./.;
           filter = path: type: (craneLib.filterCargoSources path type) || (builtins.baseNameOf path == "memory.x");
         };
 
-        buildInputs =
+        # Any external packages required to compile this project.
+        # Usually this contains runtime dependencies, but since we are
+        # compiling for a foreign platform, this is most likely going to be empty.
+        nativeBuildInputs =
           [
             pkgs.flip-link
-          ]
-          ++ lib.optionals pkgs.stdenv.isDarwin [
-            # Additional darwin specific inputs can be set here
-            pkgs.libiconv
           ];
 
-        # Disable check because some dependency tries to compile a crate against test
-        # when it isn't included. XXX: Retest this in 3 months.
+        # Any external inputs required to run this project.
+        # For normal rust applications this would contain runtime dependencies,
+        # but since we are compiling for a foreign platform this is most likely
+        # going to stay empty.
+        buildInputs = [];
+
+        # BUG:: This should not be disabled, but some dependencies try to compile against
+        # the test crate when it isn't available...
+        # Needs further investigation.
         doCheck = false;
 
         # Tell cargo which target we want to build (so it doesn't default to the build system).
@@ -105,9 +123,10 @@
           inherit cargoArtifacts;
         });
     in {
+      # Define checks that can be run with `nix flake check`
       checks =
         {
-          # Build the crate as part of `nix flake check` for convenience
+          # Build the crate normally as part of checking, for convenience
           ${projectName} = package;
 
           # Run clippy (and deny all warnings) on the crate source,
@@ -116,45 +135,27 @@
           # Note that this is done as a separate derivation so that
           # we can block the CI if there are issues here, but not
           # prevent downstream consumers from building our crate by itself.
-          ${projectName}-clippy = craneLib.cargoClippy (commonArgs
+          "${projectName}-clippy" = craneLib.cargoClippy (commonArgs
             // {
               inherit cargoArtifacts;
               cargoClippyExtraArgs = "--all-targets -- --deny warnings";
             });
 
-          ${projectName}-doc = craneLib.cargoDoc (commonArgs
+          "${projectName}-doc" = craneLib.cargoDoc (commonArgs
             // {
               inherit cargoArtifacts;
             });
 
           # Check formatting
-          ${projectName}-fmt = craneLib.cargoFmt {
+          "${projectName}-fmt" = craneLib.cargoFmt {
             inherit (commonArgs) src;
           };
 
           # Audit dependencies
-          ${projectName}-audit = craneLib.cargoAudit {
+          "${projectName}-audit" = craneLib.cargoAudit {
             inherit (commonArgs) src;
             inherit advisory-db;
           };
-
-          # Run tests with cargo-nextest
-          # Consider setting `doCheck = false` on `${projectName}` if you do not want
-          # the tests to run twice
-          ${projectName}-nextest = craneLib.cargoNextest (commonArgs
-            // {
-              inherit cargoArtifacts;
-              partitions = 1;
-              partitionType = "count";
-            });
-        }
-        // lib.optionalAttrs (localSystem == "x86_64-linux") {
-          # NB: cargo-tarpaulin only supports x86_64 systems
-          # Check code coverage (note: this will not upload coverage anywhere)
-          ${projectName}-coverage = craneLib.cargoTarpaulin (commonArgs
-            // {
-              inherit cargoArtifacts;
-            });
         }
         // {
           pre-commit = pre-commit-hooks.lib.${localSystem}.run {
@@ -170,12 +171,6 @@
 
       packages.default = package; # `nix build`
       packages.${projectName} = package; # `nix build .#${projectName}`
-
-      # Test ${projectName} and the nixos module by using
-      # `nix build --no-link --print-out-paths -L .#nixosTests.x86_64-linux.${projectName}`
-      #nixosTests.${projectName} = import ./tests/${projectName}.nix {
-      #  inherit self pkgs;
-      #};
 
       # `nix develop`
       devShells.default = pkgs.devshell.mkShell {
